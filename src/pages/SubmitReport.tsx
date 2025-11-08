@@ -10,6 +10,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { z } from "zod";
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+const reportSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(200, "Title must be less than 200 characters"),
+  category: z.enum(["power_outage", "water_cut", "road_damage", "other"], {
+    required_error: "Category is required",
+  }),
+  description: z.string().trim().min(1, "Description is required").max(2000, "Description must be less than 2000 characters"),
+  location: z.string().trim().max(500, "Location must be less than 500 characters").optional(),
+});
 
 export default function SubmitReport() {
   const [title, setTitle] = useState("");
@@ -29,11 +41,41 @@ export default function SubmitReport() {
     setLoading(true);
 
     try {
+      // Validate inputs
+      const validationResult = reportSchema.safeParse({
+        title,
+        category,
+        description,
+        location: location || undefined,
+      });
+
+      if (!validationResult.success) {
+        const firstError = validationResult.error.errors[0];
+        toast({
+          title: "Validation failed",
+          description: firstError.message,
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Validate file size
+      if (image && image.size > MAX_FILE_SIZE) {
+        toast({
+          title: "Validation failed",
+          description: "Image must be less than 5MB",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
       let imageUrl = null;
 
       if (image) {
         const fileExt = image.name.split(".").pop();
-        const fileName = `${Math.random()}.${fileExt}`;
+        const fileName = `${crypto.randomUUID()}.${fileExt}`;
         const { error: uploadError } = await supabase.storage
           .from("report-images")
           .upload(fileName, image);
@@ -48,10 +90,10 @@ export default function SubmitReport() {
       }
 
       const { error } = await supabase.from("reports").insert({
-        title,
-        category: category as "power_outage" | "water_cut" | "road_damage" | "other",
-        description,
-        location: location || null,
+        title: validationResult.data.title,
+        category: validationResult.data.category,
+        description: validationResult.data.description,
+        location: validationResult.data.location || null,
         image_url: imageUrl,
         user_id: user.id,
       });
@@ -66,7 +108,7 @@ export default function SubmitReport() {
     } catch (error: any) {
       toast({
         title: "Submission failed",
-        description: error.message,
+        description: "Failed to submit report. Please try again.",
         variant: "destructive",
       });
     }
@@ -90,6 +132,7 @@ export default function SubmitReport() {
                   id="title"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
+                  maxLength={200}
                   required
                 />
               </div>
@@ -113,6 +156,7 @@ export default function SubmitReport() {
                   id="description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
+                  maxLength={2000}
                   rows={4}
                   required
                 />
@@ -123,6 +167,7 @@ export default function SubmitReport() {
                   id="location"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
+                  maxLength={500}
                   placeholder="e.g., Main Street, near the park"
                 />
               </div>
